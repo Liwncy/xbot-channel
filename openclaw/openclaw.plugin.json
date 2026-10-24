@@ -1,0 +1,60 @@
+{
+  "id": "xbot",
+  "name": "Xbot",
+  "channels": ["xbot"],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": true,
+    "properties": {
+      "enabled": { "type": "boolean" },
+      "xchatbotApiBaseUrl": {
+        "type": "string",
+        "description": "xchatbot Worker origin, e.g. https://xbot.example.com"
+      },
+      "xchatbotToken": {
+        "type": "string",
+        "description": "Bearer token, same as xchatbot XBOT_CHANNEL_GATEWAY_TOKEN / AGENT_BRIDGE_TOKEN"
+      },
+      "botName": {
+        "type": "string",
+        "description": "Display name"
+      },
+      "accounts": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "name": { "type": "string" }
+          }
+        }
+      }
+    }
+  },
+  "channelConfigs": {
+    "xbot": {
+      "schema": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "enabled": { "type": "boolean" },
+          "xchatbotApiBaseUrl": { "type": "string" },
+          "xchatbotToken": { "type": "string" },
+          "botName": { "type": "string" },
+          "accounts": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "additionalProperties": true,
+              "properties": {
+                "enabled": { "type": "boolean" },
+                "name": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

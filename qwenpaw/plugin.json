@@ -1,0 +1,21 @@
+{
+  "id": "xbot",
+  "name": "Xbot",
+  "version": "0.1.0",
+  "type": "channel",
+  "description": "QwenPaw talks only to xchatbot; adapters stay in the Worker.",
+  "description_i18n": {
+    "zh-CN": "QwenPaw 只连 xchatbot。微信 / Golem 仍由 Worker 进出，不要开自带微信。",
+    "en-US": "QwenPaw talks only to xchatbot. Keep native WeChat disabled."
+  },
+  "author": "xchatbot",
+  "entry": {
+    "backend": "plugin.py"
+  },
+  "dependencies": [
+    "aiohttp>=3.8.0"
+  ],
+  "qwenpaw_version": {
+    "min": "2.0.0"
+  }
+}
