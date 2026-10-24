@@ -14,6 +14,7 @@
 |---|---|---|
 | [openclaw/](openclaw/) | OpenClaw | 扩展路径指这个目录 |
 | [qwenpaw/](qwenpaw/) | QwenPaw | 只打包这个目录，`plugin.json` 在 zip 根上 |
+| [hermes/](hermes/) | Hermes | 接到 `%USERPROFILE%\.hermes\plugins\xbot`，再 `hermes plugins enable xbot` |
 
 ## 入站
 

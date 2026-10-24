@@ -1,0 +1,28 @@
+name: xbot
+label: Xbot
+kind: platform
+version: 0.1.0
+description: Hermes talks only to xchatbot. Adapters stay in the Worker.
+author: xchatbot
+requires_env:
+  - name: XBOT_XCHATBOT_API_BASE_URL
+    description: "xchatbot Worker origin, e.g. https://xbot.example.com"
+    prompt: "xchatbot 地址"
+    password: false
+  - name: XBOT_XCHATBOT_TOKEN
+    description: "Bearer token, same as xchatbot AGENT_BRIDGE_TOKEN"
+    prompt: "xchatbot Token"
+    password: true
+optional_env:
+  - name: XBOT_INBOUND_TOKEN
+    description: "Inbound Bearer. Empty means the same as XBOT_XCHATBOT_TOKEN."
+    prompt: "入站 Token（可空）"
+    password: true
+  - name: XBOT_HOST
+    description: "Bind address. Default 127.0.0.1. Put a tunnel in front of it."
+    prompt: "监听地址"
+    password: false
+  - name: XBOT_PORT
+    description: "Bind port. Default 8642."
+    prompt: "监听端口"
+    password: false
