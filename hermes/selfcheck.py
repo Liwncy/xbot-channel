@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import unittest
 
-from inbound import InboundError, parse_inbound, route_from_chat_id
+from inbound import InboundError, media_parts, parse_inbound, route_from_chat_id
 from outbound import build_outbound_body, http_error_detail, outbound_headers
 
 
@@ -27,6 +27,22 @@ class InboundTests(unittest.TestCase):
     def test_group_requires_room(self) -> None:
         with self.assertRaises(InboundError):
             parse_inbound({"messageId": "m1", "platform": "golem", "source": "group", "from": "wxid_a"})
+
+    def test_media_parts(self) -> None:
+        parsed = parse_inbound(
+            {
+                "messageId": "m1",
+                "platform": "golem",
+                "from": "wxid_a",
+                "type": "video",
+                "mediaUrl": "https://x/cover.jpg",
+                "mediaKind": "emoji",
+                "videoUrl": "https://x/v.mp4",
+            }
+        )
+        parts = media_parts(parsed)
+        self.assertEqual([p["cacheKind"] for p in parts], ["image", "video"])
+        self.assertEqual(media_parts(parse_inbound({"messageId": "m2", "platform": "golem", "from": "a"})), [])
 
     def test_route_fallback(self) -> None:
         route = route_from_chat_id("golem:group:123@chatroom")

@@ -9,7 +9,7 @@ from typing import Any, Dict, Iterable
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-_BROWSER_UA = (
+BROWSER_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 )
@@ -51,7 +51,7 @@ def outbound_headers(token: str) -> Dict[str, str]:
     return {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
-        "User-Agent": _BROWSER_UA,
+        "User-Agent": BROWSER_UA,
         "Accept": "application/json, text/plain, */*",
         "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
     }

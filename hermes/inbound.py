@@ -3,9 +3,12 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 MEDIA_KINDS = ("image", "video", "emoji", "voice")
+
+# Hermes cache kinds: image / video / audio.
+_CACHE_KINDS = {"image": "image", "emoji": "image", "video": "video", "voice": "audio"}
 
 
 class InboundError(ValueError):
@@ -84,6 +87,19 @@ def parse_inbound(params: Any) -> Dict[str, Any]:
         "videoUrl": video_url,
         "timestamp": timestamp,
     }
+
+
+def media_parts(parsed: Dict[str, Any]) -> List[Dict[str, str]]:
+    """Remote media to download, with the Hermes cache kind for each."""
+    parts: List[Dict[str, str]] = []
+    media_url = parsed.get("mediaUrl") or ""
+    video_url = parsed.get("videoUrl") or ""
+    kind = parsed.get("mediaKind") or "image"
+    if media_url:
+        parts.append({"url": media_url, "kind": kind, "cacheKind": _CACHE_KINDS.get(kind, "image")})
+    if video_url and video_url != media_url:
+        parts.append({"url": video_url, "kind": "video", "cacheKind": "video"})
+    return parts
 
 
 def route_from_chat_id(chat_id: str) -> Dict[str, str] | None:

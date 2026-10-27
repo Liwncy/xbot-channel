@@ -16,8 +16,8 @@ from gateway.platforms.base import BasePlatformAdapter, SendResult
 from gateway.platforms.event import MessageEvent, MessageType
 from gateway.session import SessionSource
 
-from .inbound import InboundError, parse_inbound, route_from_chat_id
-from .outbound import build_outbound_body, post_outbound, trim_base_url
+from .inbound import InboundError, media_parts, parse_inbound, route_from_chat_id
+from .outbound import BROWSER_UA, build_outbound_body, post_outbound, trim_base_url
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +27,22 @@ _MEDIA_TYPES = {
     "video": MessageType.VIDEO,
     "voice": MessageType.VOICE,
 }
+
+
+_MAX_MEDIA_BYTES = 128 * 1024 * 1024
+
+
+async def _download(url: str) -> tuple[bytes, str]:
+    import aiohttp
+
+    timeout = aiohttp.ClientTimeout(total=60)
+    async with aiohttp.ClientSession(timeout=timeout, headers={"User-Agent": BROWSER_UA}) as session:
+        async with session.get(url) as resp:
+            resp.raise_for_status()
+            data = await resp.content.read(_MAX_MEDIA_BYTES + 1)
+            if len(data) > _MAX_MEDIA_BYTES:
+                raise ValueError("media too large")
+            return data, (resp.headers.get("Content-Type") or "").split(";")[0].strip()
 
 
 def _pick(extra: dict, *keys: str, env: str = "", default: str = "") -> str:
@@ -178,7 +194,7 @@ class XbotAdapter(BasePlatformAdapter):
             "roomId": parsed["roomId"],
             "messageId": parsed["messageId"],
         }
-        task = asyncio.create_task(self._dispatch(self._event(parsed)))
+        task = asyncio.create_task(self._dispatch(parsed))
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
         return web.json_response({"ok": True, "accepted": True})
@@ -199,18 +215,26 @@ class XbotAdapter(BasePlatformAdapter):
         self._seen_set.add(message_id)
         return False
 
-    def _event(self, parsed: Dict[str, Any]) -> MessageEvent:
-        urls = []
-        kinds = []
-        if parsed["mediaUrl"]:
-            urls.append(parsed["mediaUrl"])
-            kinds.append(parsed["mediaKind"] or "image")
-        if parsed["videoUrl"] and parsed["videoUrl"] not in urls:
-            urls.append(parsed["videoUrl"])
-            kinds.append("video")
+    async def _cache_media(self, parsed: Dict[str, Any]) -> list:
+        """Hermes reads media_urls as local paths with MIME media_types, so download first."""
+        from gateway.platforms.base import cache_media_bytes_async
+
+        cached = []
+        for part in media_parts(parsed):
+            try:
+                data, mime = await _download(part["url"])
+                item = await cache_media_bytes_async(data, mime_type=mime, default_kind=part["cacheKind"])
+            except Exception as exc:
+                logger.warning("xbot: media download failed for %s: %s", parsed["messageId"], exc)
+                continue
+            if item is not None:
+                cached.append((part["kind"], item))
+        return cached
+
+    def _event(self, parsed: Dict[str, Any], cached: list) -> MessageEvent:
         return MessageEvent(
             text=parsed["content"],
-            message_type=_MEDIA_TYPES.get(kinds[0], MessageType.TEXT) if kinds else MessageType.TEXT,
+            message_type=_MEDIA_TYPES.get(cached[0][0], MessageType.TEXT) if cached else MessageType.TEXT,
             user_id=parsed["from"],
             user_name=parsed["senderName"],
             source=SessionSource(
@@ -222,16 +246,16 @@ class XbotAdapter(BasePlatformAdapter):
                 message_id=parsed["messageId"],
             ),
             message_id=parsed["messageId"],
-            media_urls=urls,
-            media_types=kinds,
+            media_urls=[item.path for _, item in cached],
+            media_types=[item.media_type for _, item in cached],
             timestamp=datetime.fromtimestamp(parsed["timestamp"] / 1000),
         )
 
-    async def _dispatch(self, event: MessageEvent) -> None:
+    async def _dispatch(self, parsed: Dict[str, Any]) -> None:
         try:
-            await self.handle_message(event)
+            await self.handle_message(self._event(parsed, await self._cache_media(parsed)))
         except Exception:
-            logger.exception("xbot: inbound dispatch failed for %s", event.message_id)
+            logger.exception("xbot: inbound dispatch failed for %s", parsed["messageId"])
 
     async def _deliver_url(self, chat_id: str, kind: str, url: str, caption: Optional[str]) -> SendResult:
         href = (url or "").strip()
