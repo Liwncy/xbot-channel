@@ -6,6 +6,7 @@ from __future__ import annotations
 import unittest
 
 from inbound import InboundError, media_parts, parse_inbound, route_from_chat_id
+from invoke import parse_invokes
 from outbound import build_outbound_body, http_error_detail, outbound_headers
 
 
@@ -49,6 +50,22 @@ class InboundTests(unittest.TestCase):
         assert route is not None
         self.assertEqual(route["roomId"], "123@chatroom")
         self.assertEqual(route["source"], "group")
+
+
+class InvokeTests(unittest.TestCase):
+    def test_lifts_a_bare_invoke(self) -> None:
+        calls = parse_invokes(
+            '<invoke name="mcp__cf_mcp_tools__web_search">\n'
+            '<parameter name="query">潍坊</parameter>\n'
+            '<parameter name="max_results">8</parameter>\n'
+            "</invoke>"
+        )
+        assert calls is not None
+        self.assertEqual(calls[0][0], "mcp__cf_mcp_tools__web_search")
+        self.assertEqual(calls[0][1], {"query": "潍坊", "max_results": 8})
+
+    def test_ignores_prose(self) -> None:
+        self.assertIsNone(parse_invokes('查好了\n<invoke name="x"></invoke>'))
 
 
 class OutboundTests(unittest.TestCase):

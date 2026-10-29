@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+import json
 import logging
+import uuid
 from collections import deque
 from datetime import datetime
 from typing import Any, Dict, Optional
@@ -17,6 +19,7 @@ from gateway.platforms.event import MessageEvent, MessageType
 from gateway.session import SessionSource
 
 from .inbound import InboundError, media_parts, parse_inbound, route_from_chat_id
+from .invoke import parse_invokes
 from .outbound import BROWSER_UA, build_outbound_body, post_outbound, trim_base_url
 
 logger = logging.getLogger(__name__)
@@ -39,10 +42,15 @@ async def _download(url: str) -> tuple[bytes, str]:
     async with aiohttp.ClientSession(timeout=timeout, headers={"User-Agent": BROWSER_UA}) as session:
         async with session.get(url) as resp:
             resp.raise_for_status()
-            data = await resp.content.read(_MAX_MEDIA_BYTES + 1)
-            if len(data) > _MAX_MEDIA_BYTES:
-                raise ValueError("media too large")
-            return data, (resp.headers.get("Content-Type") or "").split(";")[0].strip()
+            # read(n) returns the first buffered chunk, not the whole body.
+            chunks = []
+            total = 0
+            async for chunk in resp.content.iter_chunked(65536):
+                total += len(chunk)
+                if total > _MAX_MEDIA_BYTES:
+                    raise ValueError("media too large")
+                chunks.append(chunk)
+            return b"".join(chunks), (resp.headers.get("Content-Type") or "").split(";")[0].strip()
 
 
 def _pick(extra: dict, *keys: str, env: str = "", default: str = "") -> str:
@@ -310,7 +318,28 @@ def _env_enablement():
     return seeded or None
 
 
+def _lift_invoke_xml(**kwargs):
+    """dots3 writes <invoke> as the reply. Promote it to a tool call so the loop runs it."""
+    message = kwargs.get("assistant_message")
+    if message is None or getattr(message, "tool_calls", None):
+        return None
+    calls = parse_invokes(getattr(message, "content", None) or "")
+    if not calls:
+        return None
+    from agent.transports.types import ToolCall
+
+    message.tool_calls = [
+        ToolCall(id=f"call_{uuid.uuid4().hex[:24]}", name=name, arguments=json.dumps(args, ensure_ascii=False))
+        for name, args in calls
+    ]
+    message.content = ""
+    message.finish_reason = "tool_calls"
+    logger.info("xbot: lifted %d invoke block(s) into tool calls", len(calls))
+    return None
+
+
 def register(ctx) -> None:
+    ctx.register_hook("post_api_request", _lift_invoke_xml)
     ctx.register_platform(
         name="xbot",
         label="Xbot",
