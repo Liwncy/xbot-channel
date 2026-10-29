@@ -18,6 +18,7 @@ import {
   type OpenClawReplyDispatchInfo,
   type OpenClawReplyDispatcherPayload,
 } from './runtime.ts';
+import { isAgentErrorNotice } from './error-notice.ts';
 import { isContextOverflowAlreadyReset, isContextOverflowNotice } from './overflow.ts';
 import { mapOpenClawPayloadToReplies, resolveOutboundReceiver, sendReplies } from './outbound.ts';
 
@@ -291,9 +292,16 @@ export async function dispatchXbotInbound(args: {
                 markOverflow(payload.text);
                 return;
               }
-              if (/agent run failed/i.test(String(payload.text || ''))) return;
+              if (isAgentErrorNotice(payload.text)) {
+                api.logger?.warn?.(`[xbot] swallowed agent error notice: ${asString(payload.text).slice(0, 120)}`);
+                return;
+              }
               if (!shouldDeliver(payload, info)) return;
               const replies = mapOpenClawPayloadToReplies(payload);
+              if (replies.some((reply) => reply.type === 'text' && isAgentErrorNotice(reply.content))) {
+                api.logger?.warn?.('[xbot] swallowed agent error notice (mapped reply)');
+                return;
+              }
               const overflowReply = replies.find(
                 (reply) => reply.type === 'text' && isContextOverflowNotice(reply.content),
               );
