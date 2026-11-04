@@ -10,6 +10,13 @@ import {
   isContextOverflowError,
   isContextOverflowNotice,
 } from '../src/overflow.ts';
+import {
+  computeBackoffMs,
+  SeenIds,
+  toMailboxUrl,
+  XbotMailboxClient,
+  type WebSocketCtor,
+} from '../src/ws-client.ts';
 
 {
   const parsed = parseXbotInboundParams({
@@ -135,3 +142,95 @@ assert.equal(
   true,
 );
 console.log('✓ overflow notice detect');
+
+assert.equal(toMailboxUrl('https://xbot.example.com', 'openclaw'), 'wss://xbot.example.com/agent/ws?brain=openclaw');
+assert.equal(toMailboxUrl('http://127.0.0.1:8787/', 'a b'), 'ws://127.0.0.1:8787/agent/ws?brain=a+b');
+assert.equal(toMailboxUrl('https://x.example.com/base/', ''), 'wss://x.example.com/base/agent/ws');
+assert.equal(toMailboxUrl('not a url', 'openclaw'), null);
+assert.equal(toMailboxUrl('ftp://x.example.com', 'openclaw'), null);
+assert.equal(computeBackoffMs(0, true, 1), 1000);
+assert.equal(computeBackoffMs(3, true, 1), 8000);
+assert.equal(computeBackoffMs(20, true, 1), 30_000);
+assert.equal(computeBackoffMs(20, false, 1), 120_000);
+assert.equal(computeBackoffMs(2, true, 0), 2000);
+{
+  const seen = new SeenIds(1000, 3);
+  assert.equal(seen.check('a', 0), false);
+  assert.equal(seen.check('a', 10), true);
+  assert.equal(seen.check('a', 5000), false); // 过期后重新算
+  seen.check('b', 5001);
+  seen.check('c', 5002);
+  seen.check('d', 5003); // 超上限，挤掉最老的 a
+  assert.equal(seen.check('a', 5004), false);
+}
+console.log('✓ mailbox helpers');
+
+{
+  type Fake = {
+    readyState: number;
+    onopen: ((e: unknown) => void) | null;
+    onmessage: ((e: { data: unknown }) => void) | null;
+    onclose: ((e: { code?: number }) => void) | null;
+    onerror: ((e: unknown) => void) | null;
+    sent: string[];
+    url: string;
+    options: unknown;
+    send: (data: string) => void;
+    close: () => void;
+  };
+  const sockets: Fake[] = [];
+  const FakeWebSocket = function (this: Fake, url: string, options?: unknown) {
+    this.readyState = 0;
+    this.onopen = null;
+    this.onmessage = null;
+    this.onclose = null;
+    this.onerror = null;
+    this.sent = [];
+    this.url = url;
+    this.options = options;
+    this.send = (data: string) => {
+      this.sent.push(data);
+    };
+    this.close = () => {};
+    sockets.push(this);
+  } as unknown as WebSocketCtor;
+
+  const received: string[] = [];
+  const logs: string[] = [];
+  const client = new XbotMailboxClient({
+    getConfig: () => ({ baseUrl: 'https://xbot.example.com', token: 'secret', brain: 'openclaw' }),
+    onMessage: (payload, id) => {
+      received.push(`${id}:${String(payload.content)}`);
+    },
+    log: { info: (m) => logs.push(m), warn: (m) => logs.push(m) },
+    webSocketCtor: FakeWebSocket,
+  });
+  client.start();
+  const ws = sockets[0]!;
+  assert.equal(ws.url, 'wss://xbot.example.com/agent/ws?brain=openclaw');
+  assert.deepEqual(ws.options, { headers: { Authorization: 'Bearer secret' } });
+
+  ws.onopen?.({});
+  assert.equal(client.status().connected, true);
+  assert.deepEqual(JSON.parse(ws.sent[0]!), { t: 'hello', client: 'openclaw-xbot', version: '0.1.0' });
+
+  const frame = JSON.stringify({ t: 'msg', id: 'm1', payload: { messageId: 'm1', content: '你好' } });
+  ws.onmessage?.({ data: frame });
+  ws.onmessage?.({ data: 'pong' });
+  ws.onmessage?.({ data: frame }); // 重发：只回 ack，不再处理
+  ws.onmessage?.({ data: JSON.stringify({ t: 'msg', id: 'm2', payload: 'bad' }) }); // 没正文：回 ack，跳过
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  assert.deepEqual(received, ['m1:你好']);
+  const acks = ws.sent.slice(1).map((raw) => JSON.parse(raw) as { t: string; id: string });
+  assert.deepEqual(acks, [
+    { t: 'ack', id: 'm1' },
+    { t: 'ack', id: 'm1' },
+    { t: 'ack', id: 'm2' },
+  ]);
+
+  client.stop();
+  assert.equal(client.status().running, false);
+  assert.equal(client.status().connected, false);
+}
+console.log('✓ mailbox client');

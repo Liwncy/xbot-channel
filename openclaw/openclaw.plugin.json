@@ -15,6 +15,14 @@
         "type": "string",
         "description": "Bearer token, same as xchatbot XBOT_CHANNEL_GATEWAY_TOKEN / AGENT_BRIDGE_TOKEN"
       },
+      "wsEnabled": {
+        "type": "boolean",
+        "description": "Connect to the xchatbot WebSocket mailbox (default true)"
+      },
+      "wsBrain": {
+        "type": "string",
+        "description": "xchatbot brain key for the mailbox (default openclaw)"
+      },
       "botName": {
         "type": "string",
         "description": "Display name"
@@ -41,6 +49,8 @@
           "enabled": { "type": "boolean" },
           "xchatbotApiBaseUrl": { "type": "string" },
           "xchatbotToken": { "type": "string" },
+          "wsEnabled": { "type": "boolean" },
+          "wsBrain": { "type": "string" },
           "botName": { "type": "string" },
           "accounts": {
             "type": "object",

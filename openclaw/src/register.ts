@@ -18,7 +18,10 @@ import {
   resolveAccount,
   resolveBotName,
   resolveDefaultDisplayName,
+  resolveMailboxBrain,
+  resolveMailboxEnabled,
   resolveXchatbotApiBaseUrl,
+  resolveXchatbotToken,
   XbotConfigSchema,
   type XbotChannelConfigRoot,
   type XbotReplyTarget,
@@ -27,6 +30,7 @@ import { dispatchXbotInbound, parseXbotInboundParams, type XbotInboundDispatchRe
 import { isContextOverflowError, OVERFLOW_RETRY_REPLY, resetXbotSession } from './overflow.ts';
 import { buildExplicitTarget, parseExplicitTarget, sendXbotMedia, sendXbotText } from './outbound.ts';
 import { resolveOpenClawAgentRoute } from './runtime.ts';
+import { XbotMailboxClient } from './ws-client.ts';
 
 function asString(v: unknown, fallback = ''): string {
   if (typeof v === 'string') return v;
@@ -49,15 +53,45 @@ type GatewayContext = GatewayRequestHandlerOptions;
 export class XbotBridge {
   private readonly api: OpenClawPluginApi;
   private readonly replyTargets = new Map<string, XbotReplyTarget>();
+  private readonly mailbox: XbotMailboxClient;
   private lastInboundAt: number | null = null;
   private lastOutboundAt: number | null = null;
 
   constructor(api: OpenClawPluginApi) {
     this.api = api;
+    this.mailbox = new XbotMailboxClient({
+      getConfig: () => {
+        try {
+          const cfg = this.cfg();
+          const baseUrl = resolveXchatbotApiBaseUrl(cfg);
+          const token = resolveXchatbotToken(cfg);
+          if (!baseUrl || !token || !resolveMailboxEnabled(cfg)) return null;
+          return { baseUrl, token, brain: resolveMailboxBrain(cfg) };
+        } catch {
+          return null;
+        }
+      },
+      onMessage: (payload) => this.handlePushedInbound(payload),
+      log: {
+        info: (message) => this.api.logger?.info?.(message),
+        warn: (message) => this.api.logger?.warn?.(message),
+      },
+    });
   }
 
+  /** 注册时会调，CLI 进程也会走到这里，所以不在这里连邮箱。 */
   start = async () => {};
   stop = async () => {};
+
+  /** 只在 gateway 的服务生命周期里连邮箱；CLI 进程连上来会把 gateway 的连接顶掉。 */
+  startMailbox = async () => {
+    const mode = (this.api as { registrationMode?: string }).registrationMode;
+    if (mode && mode !== 'full') return;
+    this.mailbox.start();
+  };
+  stopMailbox = async () => {
+    this.mailbox.stop();
+  };
 
   private cfg(): XbotChannelConfigRoot {
     return getOpenClawRuntimeConfig(this.api);
@@ -75,15 +109,28 @@ export class XbotBridge {
       replyTargets: this.replyTargets.size,
       lastInboundAt: this.lastInboundAt,
       lastOutboundAt: this.lastOutboundAt,
+      mailbox: this.mailbox.status(),
     });
   };
 
   handleInbound = async ({ params, respond }: GatewayContext) => {
+    const result = await this.runInbound(params);
+    respond(result.ok, result.body);
+  };
+
+  /** 邮箱推来的消息。已经 ack 过了，这里只管跑，失败只记日志。 */
+  private handlePushedInbound = async (params: Record<string, unknown>): Promise<void> => {
+    const result = await this.runInbound(params);
+    if (!result.ok) {
+      this.api.logger?.warn?.(`[xbot] mailbox inbound failed: ${asString(result.body.error)}`);
+    }
+  };
+
+  private async runInbound(params: unknown): Promise<{ ok: boolean; body: Record<string, unknown> }> {
     const cfg = this.cfg();
     const parsed = parseXbotInboundParams(params);
     if (!resolveXchatbotApiBaseUrl(cfg)) {
-      respond(false, { ok: false, error: 'xchatbotApiBaseUrl is not configured' });
-      return;
+      return { ok: false, body: { ok: false, error: 'xchatbotApiBaseUrl is not configured' } };
     }
     this.lastInboundAt = Date.now();
     try {
@@ -107,24 +154,30 @@ export class XbotBridge {
         });
       }
       this.lastOutboundAt = Date.now();
-      respond(true, {
+      return {
         ok: true,
-        accepted: true,
-        dispatched: result.dispatched,
-        reason: result.reason || null,
-        accountId: parsed.accountId,
-        sessionKey: result.sessionKey || null,
-        messageId: parsed.messageId,
-      });
+        body: {
+          ok: true,
+          accepted: true,
+          dispatched: result.dispatched,
+          reason: result.reason || null,
+          accountId: parsed.accountId,
+          sessionKey: result.sessionKey || null,
+          messageId: parsed.messageId,
+        },
+      };
     } catch (error) {
-      respond(false, {
+      return {
         ok: false,
-        error: error instanceof Error ? error.message : String(error),
-        accountId: parsed.accountId,
-        messageId: parsed.messageId,
-      });
+        body: {
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+          accountId: parsed.accountId,
+          messageId: parsed.messageId,
+        },
+      };
     }
-  };
+  }
 
   private async dispatchInboundWithOverflowRecovery(args: {
     cfg: XbotChannelConfigRoot;
@@ -258,7 +311,7 @@ export class XbotBridge {
     mode: 'push',
   });
 
-  getStatusHeadline = () => '等待 xchatbot 推送';
+  getStatusHeadline = () => (this.mailbox.status().connected ? '已连上 xchatbot' : '等待 xchatbot 推送');
   channelStartAccount = async () => {};
   channelStopAccount = async () => {};
 }
@@ -570,8 +623,14 @@ export function registerXbotPlugin(api: OpenClawPluginApi): void {
   if (!runtime.serviceRegistered) {
     api.registerService({
       id: 'xbot-bridge-service',
-      start: async () => getXbotBridge(api).start(),
-      stop: async () => getXbotBridge(api).stop(),
+      start: async () => {
+        await getXbotBridge(api).start();
+        await getXbotBridge(api).startMailbox();
+      },
+      stop: async () => {
+        await getXbotBridge(api).stopMailbox();
+        await getXbotBridge(api).stop();
+      },
     });
     runtime.serviceRegistered = true;
   }

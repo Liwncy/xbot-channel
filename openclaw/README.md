@@ -41,9 +41,24 @@ OpenClaw 只连 [xchatbot](https://github.com/lwc--/xchatbot)，不认微信 / G
 
 `wechatApiBaseUrl` 已废弃，可以删。
 
+可选：
+
+| 配置 | 默认 | 说明 |
+|---|---|---|
+| `wsEnabled` | `true` | 是否主动连 xchatbot 的 WebSocket 邮箱。设 `false` 只走 HTTP |
+| `wsBrain` | `openclaw` | 对应 xchatbot `agent_brain.brain_key` |
+
 ## 入站
 
-xchatbot POST `/api/channels/xbot/inbound`，必须带 `platform`（如 `golem`、`web`）。
+两条路，同一份 payload，必须带 `platform`（如 `golem`、`web`）：
+
+1. **WebSocket 邮箱（推荐）**：通道在 gateway 启动后主动连 `wss://{xchatbotApiBaseUrl}/agent/ws?brain=<wsBrain>`，`Authorization: Bearer <xchatbotToken>`。xchatbot 把入站推过来，通道**先去重、先回 `ack`，再跑 agent**。`ack` 只表示收下了，不表示答完。断线自动重连（1s 起步指数退避，封顶 30s）；被另一个实例顶掉（close 4000）会等 60s 再连。
+   - 需要 xchatbot 把这个大脑切到 ws：`UPDATE agent_brain SET transport = 'ws' WHERE brain_key = 'openclaw';`
+   - 不切的话连上也收不到消息，行为和以前一样走 HTTP。
+   - 需要 Node 带全局 `WebSocket` 且支持 `{headers}`（Node 24 已验证；没有时自动退回 HTTP 并打一条 warn）。
+2. **HTTP 直推（兜底）**：xchatbot POST `/api/channels/xbot/inbound`。邮箱里没人连着时 xchatbot 自动走这条。
+
+CLI 进程不会连邮箱，只有 gateway 的服务生命周期才连，避免把 gateway 的连接顶掉。
 
 ## 出站
 

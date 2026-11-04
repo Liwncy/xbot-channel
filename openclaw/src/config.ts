@@ -17,6 +17,10 @@ export type XbotChannelConfigSection = {
   enabled?: boolean;
   xchatbotApiBaseUrl?: string;
   xchatbotToken?: string;
+  /** 主动连 xchatbot 的 WebSocket 邮箱。默认开；xchatbot 那边不把该大脑切到 ws 时连上也不会收到消息。 */
+  wsEnabled?: boolean;
+  /** 邮箱对应的 xchatbot 大脑名（agent_brain.brain_key），默认 openclaw。 */
+  wsBrain?: string;
   botName?: string;
   accounts?: Record<string, XbotAccountConfig | undefined>;
 };
@@ -83,6 +87,8 @@ export const XbotConfigSchema = {
     enabled: { type: 'boolean' },
     xchatbotApiBaseUrl: { type: 'string' },
     xchatbotToken: { type: 'string' },
+    wsEnabled: { type: 'boolean' },
+    wsBrain: { type: 'string' },
     botName: { type: 'string' },
     accounts: {
       type: 'object',
@@ -153,6 +159,16 @@ export function resolveXchatbotApiBaseUrl(cfg: XbotChannelConfigRoot | null | un
 
 export function resolveXchatbotToken(cfg: XbotChannelConfigRoot | null | undefined): string {
   return asString(getChannelConfig(cfg).xchatbotToken).trim();
+}
+
+/** 频道没被关掉、也没单独关 ws 才连邮箱。 */
+export function resolveMailboxEnabled(cfg: XbotChannelConfigRoot | null | undefined): boolean {
+  const section = getChannelConfig(cfg);
+  return section.enabled !== false && section.wsEnabled !== false;
+}
+
+export function resolveMailboxBrain(cfg: XbotChannelConfigRoot | null | undefined): string {
+  return asString(getChannelConfig(cfg).wsBrain).trim() || 'openclaw';
 }
 
 export function resolveBotName(cfg: XbotChannelConfigRoot | null | undefined): string {
