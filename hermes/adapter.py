@@ -20,7 +20,7 @@ from gateway.session import SessionSource
 
 from .inbound import InboundError, media_parts, parse_inbound, route_from_chat_id
 from .invoke import parse_invokes
-from .outbound import BROWSER_UA, build_outbound_body, post_outbound, trim_base_url
+from .outbound import BROWSER_UA, build_outbound_body, is_background_notice, post_outbound, trim_base_url
 
 logger = logging.getLogger(__name__)
 
@@ -126,6 +126,9 @@ class XbotAdapter(BasePlatformAdapter):
     ) -> SendResult:
         text = (content or "").strip()
         if not text:
+            return SendResult(success=True)
+        if is_background_notice(text, metadata):
+            logger.info("xbot: dropped background review notice: %s", text[:120])
             return SendResult(success=True)
         return await self._deliver(chat_id, [{"type": "text", "content": text}])
 

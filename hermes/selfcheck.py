@@ -7,7 +7,7 @@ import unittest
 
 from inbound import InboundError, media_parts, parse_inbound, route_from_chat_id
 from invoke import parse_invokes
-from outbound import build_outbound_body, http_error_detail, outbound_headers
+from outbound import build_outbound_body, http_error_detail, is_background_notice, outbound_headers
 
 
 class InboundTests(unittest.TestCase):
@@ -86,6 +86,15 @@ class OutboundTests(unittest.TestCase):
         self.assertEqual(body["from"], "wxid_a")
         self.assertIsNone(body["roomId"])
         self.assertIn("Mozilla", outbound_headers("t")["User-Agent"])
+
+    def test_background_notice_needs_both_marker_and_prefix(self) -> None:
+        notice = "💾 Self-improvement review: User profile updated"
+        self.assertTrue(is_background_notice(notice, {"_interim_send": True}))
+        self.assertTrue(is_background_notice("💾 自我改进回顾：记忆已更新", {"_interim_send": True}))
+        self.assertFalse(is_background_notice(notice, None))
+        self.assertFalse(is_background_notice(notice, {}))
+        self.assertFalse(is_background_notice("好的 💾", {"_interim_send": True}))
+        self.assertFalse(is_background_notice("查好了", {"_interim_send": True}))
 
     def test_cloudflare_1010(self) -> None:
         detail = http_error_detail(403, "error code: 1010")

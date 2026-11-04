@@ -27,6 +27,17 @@ def trim_base_url(url: str) -> str:
     return _as_str(url).rstrip("/")
 
 
+def is_background_notice(text: str, metadata: object) -> bool:
+    """Hermes 后台自我改进的总结（"💾 …"）。
+
+    网关把它当作"回合中途的状态消息"发出，带 ``_interim_send``，各语言都以 💾 开头。
+    它是给本地用户看的，不该进微信。两个条件同时满足才算，避免误伤正常回复。
+    """
+    if not isinstance(metadata, dict) or not metadata.get("_interim_send"):
+        return False
+    return _as_str(text).startswith("💾")
+
+
 def build_outbound_body(
     *,
     platform: str,
