@@ -239,6 +239,18 @@ class XbotAdapter(BasePlatformAdapter):
                 cached.append((part["kind"], item))
         return cached
 
+    @staticmethod
+    def _reply_expected(parsed: Dict[str, Any]) -> Optional[bool]:
+        """Group chatter nobody addressed to the bot may end in a bare NO_REPLY.
+
+        Without this, Hermes treats that silence as an error and posts its
+        "model returned only a silence marker" warning into the chat. Addressed
+        or unknown messages stay None so the fallback still covers real misses.
+        """
+        if parsed["kind"] == "group" and parsed.get("addressed") is False:
+            return False
+        return None
+
     def _event(self, parsed: Dict[str, Any], cached: list) -> MessageEvent:
         return MessageEvent(
             text=parsed["content"],
@@ -257,6 +269,7 @@ class XbotAdapter(BasePlatformAdapter):
             media_urls=[item.path for _, item in cached],
             media_types=[item.media_type for _, item in cached],
             timestamp=datetime.fromtimestamp(parsed["timestamp"] / 1000),
+            reply_expected=self._reply_expected(parsed),
         )
 
     async def _dispatch(self, parsed: Dict[str, Any]) -> None:

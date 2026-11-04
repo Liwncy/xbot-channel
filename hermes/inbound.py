@@ -70,6 +70,8 @@ def parse_inbound(params: Any) -> Dict[str, Any]:
         raise InboundError("roomId is required for group messages")
 
     chat_id = f"{platform}:group:{peer_id}" if kind == "group" else f"{platform}:user:{sender_id}"
+    # Only an explicit boolean counts; absent or anything else means "unknown".
+    addressed = data.get("addressed")
     return {
         "messageId": message_id,
         "platform": platform,
@@ -85,6 +87,7 @@ def parse_inbound(params: Any) -> Dict[str, Any]:
         "mediaUrl": media_url,
         "mediaKind": media_kind,
         "videoUrl": video_url,
+        "addressed": addressed if isinstance(addressed, bool) else None,
         "timestamp": timestamp,
     }
 

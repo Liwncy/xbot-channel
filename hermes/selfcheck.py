@@ -29,6 +29,13 @@ class InboundTests(unittest.TestCase):
         with self.assertRaises(InboundError):
             parse_inbound({"messageId": "m1", "platform": "golem", "source": "group", "from": "wxid_a"})
 
+    def test_addressed_is_only_an_explicit_boolean(self) -> None:
+        base = {"messageId": "m1", "platform": "golem", "source": "group", "roomId": "r@chatroom", "from": "wxid_a"}
+        self.assertIsNone(parse_inbound(base)["addressed"])
+        self.assertIs(parse_inbound({**base, "addressed": False})["addressed"], False)
+        self.assertIs(parse_inbound({**base, "addressed": True})["addressed"], True)
+        self.assertIsNone(parse_inbound({**base, "addressed": "false"})["addressed"])
+
     def test_media_parts(self) -> None:
         parsed = parse_inbound(
             {
