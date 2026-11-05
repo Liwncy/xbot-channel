@@ -245,9 +245,13 @@ export async function sendReplies(args: {
   const token = resolveXchatbotToken(args.cfg);
   if (!apiBase) throw new Error('xchatbotApiBaseUrl is not configured');
   if (!token) throw new Error('xchatbotToken is not configured');
+  const sanitized = sanitizeOutboundReplies(args.replies);
+  if (sanitized.length === 0) {
+    return emptySendResult();
+  }
   if (!args.route.platform) throw new Error('platform is required');
   const sessionKey = `${args.route.platform}:${args.route.kind}:${args.route.groupId || args.route.userId || args.route.to}`;
-  const deduped = mediaDedupe.claim(sessionKey, sanitizeOutboundReplies(args.replies));
+  const deduped = mediaDedupe.claim(sessionKey, sanitized);
   const replies = deduped.replies;
   if (deduped.dropped > 0) {
     args.onWarn?.(`[xbot] skipped ${deduped.dropped} duplicate media within ${MEDIA_DEDUPE_WINDOW_MS / 1000}s`);
