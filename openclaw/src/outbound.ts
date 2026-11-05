@@ -9,8 +9,11 @@ import {
   type XbotRoute,
   type XchatbotReply,
 } from './config.ts';
+import { createMediaDedupe, MEDIA_DEDUPE_WINDOW_MS } from './media-dedupe.ts';
 
 export type { XchatbotReply };
+
+const mediaDedupe = createMediaDedupe();
 
 export function resolveOutboundReceiver(route: XbotRoute): string {
   return route.kind === 'group' ? route.groupId || route.to : route.userId || route.to;
@@ -161,6 +164,61 @@ function trimBaseUrl(url: string): string {
   return url.trim().replace(/\/+$/u, '');
 }
 
+/** 第一次失败后依次等 3 秒、10 秒、30 秒再试，共 4 次。 */
+export const OUTBOUND_RETRY_DELAYS_MS = [3_000, 10_000, 30_000];
+/** 发一条图最长约 90 秒（链接 45 秒 + 回退传文件），单次请求留 100 秒。 */
+const OUTBOUND_ATTEMPT_TIMEOUT_MS = 100_000;
+
+type OutboundRaw = { ok?: boolean; sentCount?: number; error?: string; duplicate?: boolean };
+
+/** 网络错误、超时、限流、5xx 和「同一条正在发送」可以重试；4xx 是请求本身有问题，重试没用。 */
+export function isRetryableOutboundStatus(status: number): boolean {
+  return status === 409 || status === 429 || status >= 500;
+}
+
+export async function postOutboundWithRetry(args: {
+  url: string;
+  token: string;
+  body: string;
+  onWarn?: (message: string) => void;
+  delaysMs?: number[];
+  attemptTimeoutMs?: number;
+  fetchImpl?: typeof fetch;
+  sleep?: (ms: number) => Promise<void>;
+}): Promise<OutboundRaw> {
+  const delays = args.delaysMs ?? OUTBOUND_RETRY_DELAYS_MS;
+  const doFetch = args.fetchImpl ?? fetch;
+  const sleep = args.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  let lastError = 'unknown';
+
+  for (let attempt = 0; attempt <= delays.length; attempt += 1) {
+    if (attempt > 0) await sleep(delays[attempt - 1]);
+    let retryable = true;
+    try {
+      const response = await doFetch(args.url, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${args.token}`,
+          'content-type': 'application/json',
+        },
+        body: args.body,
+        signal: AbortSignal.timeout(args.attemptTimeoutMs ?? OUTBOUND_ATTEMPT_TIMEOUT_MS),
+      });
+      const raw = await response.json().catch(() => null) as OutboundRaw | null;
+      if (response.ok && raw?.ok === true) return raw;
+      lastError = raw?.error || `HTTP ${response.status}`;
+      retryable = isRetryableOutboundStatus(response.status);
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+    }
+    args.onWarn?.(
+      `[xbot] xchatbot outbound failed (${attempt + 1}/${delays.length + 1}): ${lastError}`,
+    );
+    if (!retryable) break;
+  }
+  throw new Error(lastError);
+}
+
 function sanitizeOutboundReplies(replies: XchatbotReply[]): XchatbotReply[] {
   const out: XchatbotReply[] = [];
   for (const reply of replies) {
@@ -187,32 +245,38 @@ export async function sendReplies(args: {
   const token = resolveXchatbotToken(args.cfg);
   if (!apiBase) throw new Error('xchatbotApiBaseUrl is not configured');
   if (!token) throw new Error('xchatbotToken is not configured');
-  const replies = sanitizeOutboundReplies(args.replies);
+  if (!args.route.platform) throw new Error('platform is required');
+  const sessionKey = `${args.route.platform}:${args.route.kind}:${args.route.groupId || args.route.userId || args.route.to}`;
+  const deduped = mediaDedupe.claim(sessionKey, sanitizeOutboundReplies(args.replies));
+  const replies = deduped.replies;
+  if (deduped.dropped > 0) {
+    args.onWarn?.(`[xbot] skipped ${deduped.dropped} duplicate media within ${MEDIA_DEDUPE_WINDOW_MS / 1000}s`);
+  }
   if (replies.length === 0) {
     return emptySendResult();
   }
-  if (!args.route.platform) throw new Error('platform is required');
 
-  const response = await fetch(`${apiBase}/openclaw/outbound`, {
-    method: 'POST',
-    headers: {
-      authorization: `Bearer ${token}`,
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify({
-      platform: args.route.platform,
-      source: args.route.kind === 'group' ? 'group' : 'private',
-      from: args.route.userId || args.route.to,
-      roomId: args.route.groupId,
-      messageId: args.replyToMessageId,
-      replies,
-    }),
+  // 同一次发送的所有重试共用一个 outboundId，xchatbot 据此只真正发一次。
+  const body = JSON.stringify({
+    platform: args.route.platform,
+    source: args.route.kind === 'group' ? 'group' : 'private',
+    from: args.route.userId || args.route.to,
+    roomId: args.route.groupId,
+    messageId: args.replyToMessageId,
+    outboundId: randomUUID(),
+    replies,
   });
-  const raw = await response.json().catch(() => null) as { ok?: boolean; sentCount?: number; error?: string } | null;
-  if (!response.ok || raw?.ok !== true) {
-    const detail = raw?.error || `HTTP ${response.status}`;
-    args.onWarn?.(`[xbot] xchatbot outbound failed: ${detail}`);
-    throw new Error(detail);
+  let raw: OutboundRaw;
+  try {
+    raw = await postOutboundWithRetry({
+      url: `${apiBase}/openclaw/outbound`,
+      token,
+      body,
+      onWarn: args.onWarn,
+    });
+  } catch (error) {
+    deduped.release();
+    throw error;
   }
 
   const messageId = randomUUID();

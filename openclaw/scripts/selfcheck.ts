@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict';
 import { parseXbotInboundParams } from '../src/inbound.ts';
 import {
+  isRetryableOutboundStatus,
   looksLikeToolDraft,
   mapOpenClawPayloadToReplies,
   normalizeOutboundText,
+  postOutboundWithRetry,
 } from '../src/outbound.ts';
+import { createMediaDedupe, MEDIA_DEDUPE_WINDOW_MS } from '../src/media-dedupe.ts';
 import {
   isContextOverflowAlreadyReset,
   isContextOverflowError,
@@ -234,3 +237,109 @@ console.log('✓ mailbox helpers');
   assert.equal(client.status().connected, false);
 }
 console.log('✓ mailbox client');
+
+{
+  assert.equal(isRetryableOutboundStatus(500), true);
+  assert.equal(isRetryableOutboundStatus(502), true);
+  assert.equal(isRetryableOutboundStatus(409), true);
+  assert.equal(isRetryableOutboundStatus(429), true);
+  assert.equal(isRetryableOutboundStatus(400), false);
+  assert.equal(isRetryableOutboundStatus(401), false);
+
+  const jsonResponse = (status: number, body: unknown) => new Response(JSON.stringify(body), { status });
+  const run = async (script: Array<() => Response | Promise<Response>>) => {
+    const calls: Array<{ body: unknown; auth: string | null }> = [];
+    const sleeps: number[] = [];
+    let index = 0;
+    const fetchImpl = (async (_url: unknown, init?: RequestInit) => {
+      calls.push({
+        body: JSON.parse(String(init?.body)),
+        auth: new Headers(init?.headers).get('authorization'),
+      });
+      const next = script[Math.min(index, script.length - 1)];
+      index += 1;
+      return next();
+    }) as typeof fetch;
+    const warns: string[] = [];
+    const outcome = await postOutboundWithRetry({
+      url: 'https://x.test/openclaw/outbound',
+      token: 't',
+      body: JSON.stringify({ outboundId: 'o1' }),
+      delaysMs: [3, 10, 30],
+      fetchImpl,
+      sleep: async (ms) => { sleeps.push(ms); },
+      onWarn: (m) => warns.push(m),
+    }).then((raw) => ({ raw }), (error: Error) => ({ error: error.message }));
+    return { calls, sleeps, warns, ...outcome };
+  };
+
+  // 一次成功：不重试，带 token。
+  let result = await run([() => jsonResponse(200, { ok: true, sentCount: 2 })]);
+  assert.equal(result.calls.length, 1);
+  assert.equal(result.calls[0].auth, 'Bearer t');
+  assert.deepEqual(result.sleeps, []);
+  assert.equal((result as { raw: { sentCount: number } }).raw.sentCount, 2);
+
+  // 502 两次后成功：等 3、10，三次请求共用同一个 outboundId。
+  result = await run([
+    () => jsonResponse(502, { ok: false, error: 'send failed' }),
+    () => { throw new Error('network down'); },
+    () => jsonResponse(200, { ok: true, sentCount: 1 }),
+  ]);
+  assert.equal(result.calls.length, 3);
+  assert.deepEqual(result.sleeps, [3, 10]);
+  assert.deepEqual(result.calls.map((call) => (call.body as { outboundId: string }).outboundId), ['o1', 'o1', 'o1']);
+  assert.equal(result.warns.length, 2);
+
+  // 409（同一条正在发送）会重试，最后拿到 duplicate 视为成功。
+  result = await run([
+    () => jsonResponse(409, { ok: false, error: 'sending' }),
+    () => jsonResponse(200, { ok: true, sentCount: 1, duplicate: true }),
+  ]);
+  assert.equal(result.calls.length, 2);
+  assert.equal((result as { raw: { duplicate: boolean } }).raw.duplicate, true);
+
+  // 4xx 不重试。
+  result = await run([() => jsonResponse(400, { ok: false, error: 'replies is required' })]);
+  assert.equal(result.calls.length, 1);
+  assert.deepEqual(result.sleeps, []);
+  assert.equal((result as { error: string }).error, 'replies is required');
+
+  // 一直失败：共 4 次，最后抛出最后一次的原因。
+  result = await run([() => jsonResponse(503, { ok: false, error: 'unavailable' })]);
+  assert.equal(result.calls.length, 4);
+  assert.deepEqual(result.sleeps, [3, 10, 30]);
+  assert.equal((result as { error: string }).error, 'unavailable');
+}
+console.log('✓ outbound retry');
+
+{
+  let clock = 1_000;
+  const dedupe = createMediaDedupe(() => clock);
+  const image = { type: 'image' as const, url: 'https://x.test/a.png' };
+  const text = { type: 'text' as const, content: '好了' };
+
+  // 首次：全部保留。
+  let first = dedupe.claim('golem:group:r1', [image, text]);
+  assert.equal(first.replies.length, 2);
+  assert.equal(first.dropped, 0);
+
+  // 10 秒内同会话同链接：只丢图，文字保留。
+  clock += 5_000;
+  const second = dedupe.claim('golem:group:r1', [image, text]);
+  assert.deepEqual(second.replies, [text]);
+  assert.equal(second.dropped, 1);
+
+  // 别的会话不受影响。
+  assert.equal(dedupe.claim('golem:group:r2', [image]).replies.length, 1);
+
+  // 超过窗口：可以再发。
+  clock += MEDIA_DEDUPE_WINDOW_MS + 1;
+  first = dedupe.claim('golem:group:r1', [image]);
+  assert.equal(first.replies.length, 1);
+
+  // 发送失败后 release：重试不会被当成重复。
+  first.release();
+  assert.equal(dedupe.claim('golem:group:r1', [image]).replies.length, 1);
+}
+console.log('✓ media dedupe');
