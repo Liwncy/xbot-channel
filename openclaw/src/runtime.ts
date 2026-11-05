@@ -119,7 +119,14 @@ export async function dispatchOpenClawReplyWithBufferedBlockDispatcher(
       'OpenClaw channel reply dispatchReplyWithBufferedBlockDispatcher API is unavailable',
     );
   }
-  return dispatchReplyWithBufferedBlockDispatcher(params);
+  // The buffered helper falls back to the serial dispatcher, which waits out the
+  // active reply before the queue policy runs. Pass the plugin entry so a later
+  // message can steer into the running turn instead of waiting for it to finish.
+  const dispatchReplyFromConfig = reply?.dispatchReplyFromConfig;
+  return dispatchReplyWithBufferedBlockDispatcher({
+    ...params,
+    ...typeof dispatchReplyFromConfig === 'function' ? { dispatchReplyFromConfig } : {},
+  });
 }
 
 export function formatOpenClawAgentEnvelope(
