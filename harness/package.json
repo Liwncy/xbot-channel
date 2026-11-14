@@ -1,0 +1,45 @@
+{
+  "name": "dsh-xbot-channel",
+  "version": "0.1.0",
+  "description": "DeepSeek Harness channel: xchatbot inbound (WebSocket mailbox) -> agent -> xchatbot outbound",
+  "license": "MIT",
+  "type": "module",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "lib/",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Liwncy/xbot-channel.git",
+    "directory": "harness"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "engines": {
+    "node": ">=24.9"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "*",
+    "@deepseek-ai/dsh-agent": "*",
+    "@deepseek-ai/dsh-agent-default-model": "*",
+    "@deepseek-ai/dsh-llm": "*",
+    "@deepseek-ai/dsh-user-approval": "*",
+    "@deepseek-ai/schemastery": "*"
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "xchatbot",
+    "channel"
+  ]
+}

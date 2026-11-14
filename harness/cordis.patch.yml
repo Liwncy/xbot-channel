@@ -1,0 +1,17 @@
+# 把 xbot 频道挂到 dsh profile 上。
+#
+#   dsh plugin --profile xbot add <本目录>
+#   $env:XBOT_API_BASE_URL = "https://xbot.example.com"
+#   $env:XBOT_TOKEN        = "<与 Worker AGENT_BRIDGE_TOKEN 相同>"
+#   dsh --profile xbot
+#
+# 地址和 token 走环境变量，不写进文件。其余可调项见 README。
+
+- insert:
+    - id: xbot-channel
+      name: 'dsh-xbot-channel'
+      config:
+        xchatbotApiBaseUrl: !!js process.env.XBOT_API_BASE_URL
+        xchatbotToken: !!js process.env.XBOT_TOKEN
+        # 手机在云端时填 ~/.ssh/config 里的别名：截图存在那边 /tmp，发之前先取回再传图床。不填就不取。
+        phoneHost: !!js process.env.XBOT_PHONE_HOST || ''
