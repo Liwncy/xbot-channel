@@ -20,6 +20,7 @@ from gateway.session import SessionSource
 
 from .inbound import InboundError, media_parts, parse_inbound, route_from_chat_id
 from .invoke import parse_invokes
+from .media import publish_image_file, publish_local_images
 from .outbound import BROWSER_UA, build_outbound_body, is_background_notice, post_outbound, trim_base_url
 
 logger = logging.getLogger(__name__)
@@ -130,7 +131,27 @@ class XbotAdapter(BasePlatformAdapter):
         if is_background_notice(text, metadata):
             logger.info("xbot: dropped background review notice: %s", text[:120])
             return SendResult(success=True)
+        # 模型把本机图片写成 `image:C:\...`，微信拿不到本机路径，先传成链接
+        text = (await publish_local_images(text, validate=self.validate_media_delivery_path)).strip()
+        if not text:
+            return SendResult(success=True)
         return await self._deliver(chat_id, [{"type": "text", "content": text}])
+
+    async def send_image_file(
+        self,
+        chat_id: str,
+        image_path: str,
+        caption: Optional[str] = None,
+        reply_to: Optional[str] = None,
+        metadata: Optional[dict[str, Any]] = None,
+        **kwargs,
+    ) -> SendResult:
+        """Hermes 发本地图片走这里（路径已过它自己的校验）。传成链接再按图发出去。"""
+        safe = self.validate_media_delivery_path(image_path)
+        url = await publish_image_file(safe) if safe else None
+        if not url:
+            return SendResult(success=False, error="image upload failed", retryable=True)
+        return await self._deliver_url(chat_id, "image", url, caption)
 
     async def send_image(
         self,
@@ -370,6 +391,7 @@ def register(ctx) -> None:
         emoji="💬",
         platform_hint=(
             "You are replying through xchatbot. Plain text is sent back to the original chat. "
-            "Image, video, and voice replies must be http(s) URLs."
+            "Video and voice replies must be http(s) URLs. "
+            "A local image file may be sent with MEDIA:<absolute path>; it is uploaded for you."
         ),
     )
