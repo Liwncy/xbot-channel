@@ -47,6 +47,8 @@ OpenClaw 只连 [xchatbot](https://github.com/lwc--/xchatbot)，不认微信 / G
 |---|---|---|
 | `wsEnabled` | `true` | 是否主动连 xchatbot 的 WebSocket 邮箱。设 `false` 只走 HTTP |
 | `wsBrain` | `openclaw` | 对应 xchatbot `agent_brain.brain_key` |
+| `mediaRoots` | `~/.openclaw/workspace` | 回复里的本地图片（`image:` 行或本地路径）发之前会传到图床换成链接，只认这些目录里的图片（jpg/png/gif/webp，10MB 内），其余一律不传 |
+| `phoneHost` | 空 | 手机在云端那台机器上时填 `~/.ssh/config` 里的别名：回复里 `image:/tmp/<文件名>.jpg`（只认 `/tmp` 下单个图片文件）会先用 ssh 取回再传图床；留空不取 |
 
 ## 入站
 

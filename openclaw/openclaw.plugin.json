@@ -23,6 +23,15 @@
         "type": "string",
         "description": "xchatbot brain key for the mailbox (default openclaw)"
       },
+      "mediaRoots": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Local image files in replies are uploaded only from these directories (default ~/.openclaw/workspace)"
+      },
+      "phoneHost": {
+        "type": "string",
+        "description": "ssh alias of the cloud phone box; /tmp/<name>.jpg|png in replies is fetched over ssh then uploaded (empty = off)"
+      },
       "botName": {
         "type": "string",
         "description": "Display name"
@@ -51,6 +60,8 @@
           "xchatbotToken": { "type": "string" },
           "wsEnabled": { "type": "boolean" },
           "wsBrain": { "type": "string" },
+          "mediaRoots": { "type": "array", "items": { "type": "string" } },
+          "phoneHost": { "type": "string" },
           "botName": { "type": "string" },
           "accounts": {
             "type": "object",

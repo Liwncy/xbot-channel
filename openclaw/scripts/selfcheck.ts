@@ -8,6 +8,10 @@ import {
   postOutboundWithRetry,
 } from '../src/outbound.ts';
 import { createMediaDedupe, MEDIA_DEDUPE_WINDOW_MS } from '../src/media-dedupe.ts';
+import { isLocalImagePath, localizeReplies, UPLOAD_FAILED_LINE } from '../src/media.ts';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import {
   isContextOverflowAlreadyReset,
   isContextOverflowError,
@@ -82,6 +86,98 @@ console.log('✓ inbound parse');
   assert.equal(replies[0]?.type, 'voice');
 }
 console.log('✓ map replies (http only)');
+
+{
+  // 本地图片：mediaUrl 是图片路径时放行（发送前再转链接），别的本地文件仍然不要
+  const local = mapOpenClawPayloadToReplies({ mediaUrl: 'C:\\ws\\screen.jpg', type: 'image' });
+  assert.deepEqual(local, [{ type: 'image', url: 'C:\\ws\\screen.jpg' }]);
+  assert.equal(mapOpenClawPayloadToReplies({ mediaUrl: 'C:\\ws\\secret.txt' }).length, 0);
+  assert.equal(isLocalImagePath('C:\\ws\\screen.jpg'), true);
+  assert.equal(isLocalImagePath('https://x/a.jpg'), false);
+  assert.equal(isLocalImagePath('C:\\ws\\a.txt'), false);
+
+  const base = mkdtempSync(path.join(tmpdir(), 'xbot-media-'));
+  const root = path.join(base, 'work');
+  mkdirSync(root);
+  writeFileSync(path.join(root, 'screen.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]));
+  writeFileSync(path.join(root, 'note.txt'), 'x');
+  writeFileSync(path.join(base, 'secret.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47, 1]));
+
+  let uploads = 0;
+  const warns: string[] = [];
+  const out = await localizeReplies(
+    [
+      { type: 'text', content: `截好了\nimage:${path.join(root, 'screen.png')}` },
+      { type: 'image', url: path.join(root, 'screen.png') },
+      { type: 'image', url: path.join(base, 'secret.png') }, // 目录外
+      { type: 'text', content: `image:${path.join(root, 'note.txt')}` }, // 不是图片
+      { type: 'text', content: `image:${path.join(root, '..', 'secret.png')}` }, // .. 绕出去
+      { type: 'image', url: 'https://x.com/a.jpg' },
+    ],
+    {
+      roots: [root],
+      onWarn: (m) => warns.push(m),
+      upload: async () => `https://file.example/${++uploads}.png`,
+    },
+  );
+  assert.deepEqual(out, [
+    { type: 'text', content: '截好了\nimage:https://file.example/1.png' },
+    { type: 'image', url: 'https://file.example/2.png' },
+    { type: 'text', content: UPLOAD_FAILED_LINE },
+    { type: 'text', content: UPLOAD_FAILED_LINE },
+    { type: 'text', content: UPLOAD_FAILED_LINE },
+    { type: 'image', url: 'https://x.com/a.jpg' },
+  ]);
+  assert.equal(uploads, 2);
+  assert.ok(!JSON.stringify(out).includes(base), '不能把本机路径发出去');
+
+  // 上传失败也不泄露路径
+  const failed = await localizeReplies([{ type: 'image', url: path.join(root, 'screen.png') }], {
+    roots: [root],
+    upload: async () => {
+      throw new Error('boom');
+    },
+  });
+  assert.deepEqual(failed, [{ type: 'text', content: UPLOAD_FAILED_LINE }]);
+
+  // 云手机：只认 /tmp/<文件名>.<图片后缀>，其余不去云端取
+  const fetched: string[] = [];
+  const phoneOpts = {
+    roots: [root],
+    phoneHost: 'xbot-phone',
+    upload: async () => `https://file.example/${++uploads}.png`,
+    fetchPhone: async (host: string, remote: string) => {
+      fetched.push(`${host}:${remote}`);
+      return Buffer.from([0x89, 0x50, 0x4e, 0x47, 1]);
+    },
+  };
+  const phoneOk = await localizeReplies([{ type: 'text', content: 'image:/tmp/screen.jpg' }], phoneOpts);
+  assert.match((phoneOk[0] as { content: string }).content, /^image:https:\/\/file\.example\//);
+  assert.deepEqual(fetched, ['xbot-phone:/tmp/screen.jpg']);
+  fetched.length = 0;
+  for (const bad of [
+    '/etc/passwd',
+    '/tmp/sub/a.jpg',
+    '/tmp/../etc/a.jpg',
+    '/tmp/a.txt',
+    '/tmp/a b.jpg',
+    '/tmp/$(id).jpg',
+  ]) {
+    const res = await localizeReplies([{ type: 'text', content: `image:${bad}` }], phoneOpts);
+    assert.deepEqual(res, [{ type: 'text', content: UPLOAD_FAILED_LINE }], bad);
+  }
+  assert.equal(fetched.length, 0, '不合规的路径不能去云端取');
+  const noHost = await localizeReplies([{ type: 'image', url: '/tmp/screen.jpg' }], { ...phoneOpts, phoneHost: '' });
+  assert.deepEqual(noHost, [{ type: 'text', content: UPLOAD_FAILED_LINE }]);
+  const brokenFetch = await localizeReplies([{ type: 'image', url: '/tmp/screen.jpg' }], {
+    ...phoneOpts,
+    fetchPhone: async () => {
+      throw new Error('ssh: timeout');
+    },
+  });
+  assert.deepEqual(brokenFetch, [{ type: 'text', content: UPLOAD_FAILED_LINE }]);
+}
+console.log('✓ local images → links');
 
 assert.equal(normalizeOutboundText('**你好**'), '**你好**');
 assert.equal(

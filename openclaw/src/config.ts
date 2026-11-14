@@ -21,6 +21,10 @@ export type XbotChannelConfigSection = {
   wsEnabled?: boolean;
   /** 邮箱对应的 xchatbot 大脑名（agent_brain.brain_key），默认 openclaw。 */
   wsBrain?: string;
+  /** 回复里的本地图片只认这些目录里的文件；不配就只认 ~/.openclaw/workspace。 */
+  mediaRoots?: string[];
+  /** 手机在云端时，截图存在那台机器的 /tmp；填 ~/.ssh/config 里的别名就会先取回再传。留空不取。 */
+  phoneHost?: string;
   botName?: string;
   accounts?: Record<string, XbotAccountConfig | undefined>;
 };
@@ -89,6 +93,8 @@ export const XbotConfigSchema = {
     xchatbotToken: { type: 'string' },
     wsEnabled: { type: 'boolean' },
     wsBrain: { type: 'string' },
+    mediaRoots: { type: 'array', items: { type: 'string' } },
+    phoneHost: { type: 'string' },
     botName: { type: 'string' },
     accounts: {
       type: 'object',
@@ -169,6 +175,17 @@ export function resolveMailboxEnabled(cfg: XbotChannelConfigRoot | null | undefi
 
 export function resolveMailboxBrain(cfg: XbotChannelConfigRoot | null | undefined): string {
   return asString(getChannelConfig(cfg).wsBrain).trim() || 'openclaw';
+}
+
+/** 配了就用配的，没配返回空数组（调用方再落到默认目录）。 */
+export function resolveMediaRoots(cfg: XbotChannelConfigRoot | null | undefined): string[] {
+  const roots = getChannelConfig(cfg).mediaRoots;
+  if (!Array.isArray(roots)) return [];
+  return roots.map((root) => asString(root).trim()).filter(Boolean);
+}
+
+export function resolvePhoneHost(cfg: XbotChannelConfigRoot | null | undefined): string {
+  return asString(getChannelConfig(cfg).phoneHost).trim();
 }
 
 export function resolveBotName(cfg: XbotChannelConfigRoot | null | undefined): string {

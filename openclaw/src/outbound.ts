@@ -3,6 +3,8 @@ import type { ChannelMessageSendResult } from 'openclaw/plugin-sdk/channel-messa
 import { createMessageReceiptFromOutboundResults } from 'openclaw/plugin-sdk/channel-outbound';
 import {
   normalizeAccountId,
+  resolveMediaRoots,
+  resolvePhoneHost,
   resolveXchatbotApiBaseUrl,
   resolveXchatbotToken,
   type XbotChannelConfigRoot,
@@ -10,6 +12,7 @@ import {
   type XchatbotReply,
 } from './config.ts';
 import { createMediaDedupe, MEDIA_DEDUPE_WINDOW_MS } from './media-dedupe.ts';
+import { defaultMediaRoots, isLocalImagePath, localizeReplies } from './media.ts';
 
 export type { XchatbotReply };
 
@@ -111,7 +114,10 @@ function mapMediaUrl(params: {
   audioAsVoice?: boolean;
 }): XchatbotReply | null {
   const url = asString(params.url);
-  if (!isHttpUrl(url)) return null;
+  // 本地图片先原样放行，发送前由 localizeReplies 传成链接；别的本地文件仍然不要
+  if (!isHttpUrl(url)) {
+    return isLocalImagePath(url) && kindFromHint({ ...params, url }) === 'image' ? { type: 'image', url } : null;
+  }
   const kind = kindFromHint({ ...params, url });
   if (kind === 'voice') {
     const ext = extensionFromUrl(url);
@@ -245,7 +251,13 @@ export async function sendReplies(args: {
   const token = resolveXchatbotToken(args.cfg);
   if (!apiBase) throw new Error('xchatbotApiBaseUrl is not configured');
   if (!token) throw new Error('xchatbotToken is not configured');
-  const sanitized = sanitizeOutboundReplies(args.replies);
+  // 本地图片（image: 行或本地路径）先传成链接，再去重、再发
+  const configuredRoots = resolveMediaRoots(args.cfg);
+  const sanitized = await localizeReplies(sanitizeOutboundReplies(args.replies), {
+    roots: configuredRoots.length ? configuredRoots : defaultMediaRoots(),
+    phoneHost: resolvePhoneHost(args.cfg),
+    onWarn: args.onWarn,
+  });
   if (sanitized.length === 0) {
     return emptySendResult();
   }
