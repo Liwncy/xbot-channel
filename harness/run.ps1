@@ -8,8 +8,8 @@ $ErrorActionPreference = "Continue"
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
 # 计划任务带的是登录时的 PATH；刷新一次，新装的 adb 等才找得到
 $env:Path = [Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User')
-# 手机在云端（~\.ssh\config 里的别名），不用云手机就把这行删掉
-if (-not $env:XBOT_PHONE_HOST) { $env:XBOT_PHONE_HOST = 'xbot-phone' }
+# 手机在云端时才需要：设成 ~\.ssh\config 里的别名（例如 xbot-phone），截图会先从那台机器取回再传图床。
+# 用本地手机就不用设。
 $dshHome = if ($env:DSH_HOME) { $env:DSH_HOME } else { Join-Path $env:USERPROFILE ".dsh" }
 $work = Join-Path $dshHome "xbot-workspace"   # dsh 的工作区 = 启动目录，不能是插件目录
 $log = Join-Path $dshHome "xbot.log"
