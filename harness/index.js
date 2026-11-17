@@ -44,6 +44,7 @@ export function apply(ctx, config) {
     baseUrl: config.xchatbotApiBaseUrl,
     token: config.xchatbotToken,
     timeoutMs: config.outboundTimeoutMs,
+    log,
   }
 
   ctx.effect(() => {

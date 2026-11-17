@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict'
 import { parseInbound, modelText } from './lib/inbound.js'
 import { backoffMs, SeenIds, toMailboxUrl } from './lib/mailbox.js'
-import { cleanReply } from './lib/outbound.js'
+import { cleanReply, isRetryableOutboundStatus, postOutboundWithRetry } from './lib/outbound.js'
 
 assert.equal(toMailboxUrl('https://x.example.com/', 'harness'), 'wss://x.example.com/agent/ws?brain=harness')
 assert.equal(toMailboxUrl('http://127.0.0.1:8787', 'harness'), 'ws://127.0.0.1:8787/agent/ws?brain=harness')
@@ -35,5 +35,64 @@ assert.throws(() => parseInbound({ messageId: 'x', platform: 'web', source: 'gro
 
 assert.equal(cleanReply('NO_REPLY'), '')
 assert.equal(cleanReply('  好了\n\n\n\n嗯  '), '好了\n\n嗯')
+
+assert.equal(isRetryableOutboundStatus(409), true)
+assert.equal(isRetryableOutboundStatus(429), true)
+assert.equal(isRetryableOutboundStatus(502), true)
+assert.equal(isRetryableOutboundStatus(400), false)
+assert.equal(isRetryableOutboundStatus(401), false)
+
+{
+  let calls = 0
+  const warns = []
+  const slept = []
+  const ok = await postOutboundWithRetry({
+    url: 'https://example.test/openclaw/outbound',
+    token: 't',
+    body: '{}',
+    delaysMs: [1, 1],
+    timeoutMs: 1000,
+    onWarn: (m) => warns.push(m),
+    sleep: async (ms) => {
+      slept.push(ms)
+    },
+    fetchImpl: async () => {
+      calls += 1
+      if (calls < 3) throw new Error('fetch failed')
+      return {
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ ok: true, sentCount: 1 }),
+      }
+    },
+  })
+  assert.equal(ok.sentCount, 1)
+  assert.equal(calls, 3)
+  assert.deepEqual(slept, [1, 1])
+  assert.equal(warns.length, 2)
+
+  let badCalls = 0
+  await assert.rejects(
+    () =>
+      postOutboundWithRetry({
+        url: 'https://example.test/openclaw/outbound',
+        token: 't',
+        body: '{}',
+        delaysMs: [1, 1],
+        onWarn: () => {},
+        sleep: async () => {},
+        fetchImpl: async () => {
+          badCalls += 1
+          return {
+            ok: false,
+            status: 401,
+            text: async () => JSON.stringify({ ok: false, error: 'unauthorized' }),
+          }
+        },
+      }),
+    /unauthorized/,
+  )
+  assert.equal(badCalls, 1, '4xx 不重试')
+}
 
 console.log('✓ harness channel')

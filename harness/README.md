@@ -49,7 +49,7 @@ UPDATE agent_brain SET transport = 'ws' WHERE brain_key = 'harness';
 | `permissionMode` | 不设 | 沙箱预设名，不设走 profile 默认 |
 | `idleTimeoutMs` | 30 分钟 | 聊天闲置多久收掉 agent |
 | `turnTimeoutMs` | 5 分钟 | 一轮最长跑多久 |
-| `outboundTimeoutMs` | 30 秒 | 回复 POST 超时 |
+| `outboundTimeoutMs` | 30 秒 | 单次出站 POST 超时；失败会按 3s / 10s / 30s 再试，最多 4 次 |
 
 ## 行为
 
