@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict'
 import { parseInbound, modelText } from './lib/inbound.js'
 import { backoffMs, SeenIds, toMailboxUrl } from './lib/mailbox.js'
-import { cleanReply, isRetryableOutboundStatus, postOutboundWithRetry } from './lib/outbound.js'
+import { cleanReply, isRetryableOutboundStatus, postOutboundWithRetry, postText } from './lib/outbound.js'
 
 assert.equal(toMailboxUrl('https://x.example.com/', 'harness'), 'wss://x.example.com/agent/ws?brain=harness')
 assert.equal(toMailboxUrl('http://127.0.0.1:8787', 'harness'), 'ws://127.0.0.1:8787/agent/ws?brain=harness')
@@ -93,6 +93,28 @@ assert.equal(isRetryableOutboundStatus(401), false)
     /unauthorized/,
   )
   assert.equal(badCalls, 1, '4xx 不重试')
+}
+
+{
+  const ids = []
+  await postText(
+    {
+      baseUrl: 'https://example.test',
+      token: 't',
+      timeoutMs: 1000,
+      delaysMs: [1],
+      sleep: async () => {},
+      fetchImpl: async (_url, init) => {
+        ids.push(JSON.parse(init.body).outboundId)
+        if (ids.length === 1) throw new Error('fetch failed')
+        return { ok: true, status: 200, text: async () => JSON.stringify({ ok: true, sentCount: 1 }) }
+      },
+    },
+    { platform: 'golem', source: 'group', from: 'u', roomId: 'r', messageId: 'm' },
+    '好了',
+  )
+  assert.equal(ids.length, 2)
+  assert.ok(ids[0] && ids[0] === ids[1], '重试必须带同一个 outboundId')
 }
 
 console.log('✓ harness channel')

@@ -1,5 +1,7 @@
 /** 把回复 POST 回 xchatbot `/openclaw/outbound`。网络抖就按 OpenClaw 同款间隔重试。 */
 
+import { randomUUID } from 'node:crypto'
+
 // Worker 前面的 Cloudflare 会拦没有浏览器 UA 的请求（error 1010）。
 const BROWSER_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
@@ -92,12 +94,17 @@ export async function postText(target, route, text) {
     roomId: route.roomId || null,
     messageId: route.messageId || null,
     replies: [{ type: 'text', content: text }],
+    // 同一次发送的所有重试共用这个号。微信已经发出去、只是回包丢了时，Worker 认作重复，不再发第二遍。
+    outboundId: randomUUID(),
   })
   return postOutboundWithRetry({
     url: `${base}/openclaw/outbound`,
     token: target.token,
     body,
     timeoutMs: target.timeoutMs,
+    delaysMs: target.delaysMs,
+    fetchImpl: target.fetchImpl,
+    sleep: target.sleep,
     onWarn: target.log?.warn,
   })
 }
