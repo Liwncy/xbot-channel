@@ -57,6 +57,11 @@ export function apply(ctx, config) {
       idleTimeoutMs: config.idleTimeoutMs,
       turnTimeoutMs: config.turnTimeoutMs,
       log,
+      memory: {
+        baseUrl: config.xchatbotApiBaseUrl,
+        token: config.xchatbotToken,
+        timeoutMs: 8000,
+      },
     })
 
     const onMessage = async (payload, id) => {
@@ -78,7 +83,12 @@ export function apply(ctx, config) {
 
       let reply = ''
       try {
-        reply = cleanReply(await chats.ask(parsed.chatId, modelText(parsed)))
+        reply = cleanReply(await chats.ask(parsed.chatId, modelText(parsed), {
+          logSessionId: parsed.logSessionId,
+          roomRev: parsed.roomRev,
+          speakerId: parsed.from,
+          speakerRev: parsed.speakerRev,
+        }))
       } catch (error) {
         log.warn(`[xbot] 这一轮没跑成 (${parsed.chatId}): ${error.message}`)
         if (!mustReply) return

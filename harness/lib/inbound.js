@@ -12,7 +12,7 @@ function str(value) {
  *   messageId: string, platform: string, source: 'group' | 'private',
  *   from: string, senderName: string, roomId: string, chatId: string,
  *   type: string, text: string, mediaUrl: string, videoUrl: string,
- *   addressed: boolean | null,
+ *   addressed: boolean | null, logSessionId: string, roomRev: string, speakerRev: string,
  * }}
  */
 export function parseInbound(params) {
@@ -48,6 +48,9 @@ export function parseInbound(params) {
     videoUrl: str(data.videoUrl),
     // 只有明确的布尔才算；没带就是「不知道」
     addressed: typeof data.addressed === 'boolean' ? data.addressed : null,
+    logSessionId: str(data.logSessionId),
+    roomRev: str(data.roomRev),
+    speakerRev: str(data.speakerRev),
   }
 }
 

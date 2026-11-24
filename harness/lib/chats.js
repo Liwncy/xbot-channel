@@ -5,6 +5,7 @@
 import { installModelSelection } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { setApprovalPolicy } from '@deepseek-ai/dsh-user-approval'
+import { fetchMemoryCard, MemoryBook } from './memory.js'
 const SESSION_VERSION = 'v2'
 
 function safeId(id) {
@@ -42,12 +43,29 @@ export class Chats {
   /**
    * @param {import('@deepseek-ai/cordis').Context} ctx
    * @param {{ approvalPolicy: string, permissionMode?: string, idleTimeoutMs: number, turnTimeoutMs: number,
-   *           log: { info: (m: string) => void, warn: (m: string) => void } }} options
+   *           log: { info: (m: string) => void, warn: (m: string) => void },
+   *           memory?: { baseUrl: string, token: string, timeoutMs?: number } }} options
    */
   constructor(ctx, options) {
     this.ctx = ctx
     this.options = options
     this.entries = new Map() // chatId -> { handle, agent, queue, lastUsed }
+    this.memoryCells = new Map() // chatId -> { text, series }
+    this.memoryAttached = new WeakSet()
+    const memory = options.memory
+    this.book = memory?.baseUrl && memory.token
+      ? new MemoryBook(
+          (sessionId, speakerId) => fetchMemoryCard({
+            baseUrl: memory.baseUrl,
+            token: memory.token,
+            sessionId,
+            speakerId,
+            timeoutMs: memory.timeoutMs || 8000,
+            fetchImpl: (url, init) => fetch(url, init),
+          }),
+          options.log,
+        )
+      : null
     this.reaper = setInterval(() => this.#reap(), 60_000)
     this.reaper.unref?.()
     this.disposed = false
@@ -57,9 +75,9 @@ export class Chats {
    * 在这个聊天里问一句，返回 agent 的回复文本。
    * @returns {Promise<string>}
    */
-  ask(chatId, text) {
+  ask(chatId, text, hint = {}) {
     const entry = this.entries.get(chatId) ?? this.#placeholder(chatId)
-    const run = entry.queue.then(() => this.#turn(chatId, text))
+    const run = entry.queue.then(() => this.#turn(chatId, text, hint))
     // 队列不能被一次失败卡住
     entry.queue = run.catch(() => {})
     return run
@@ -135,12 +153,66 @@ export class Chats {
     return { handle, agent }
   }
 
-  async #turn(chatId, text) {
+  #cell(chatId) {
+    let cell = this.memoryCells.get(chatId)
+    if (!cell) {
+      cell = { text: '', series: false }
+      this.memoryCells.set(chatId, cell)
+    }
+    return cell
+  }
+
+  /** 闲置收掉再接上时要重新挂。这一节每次组装才读当前卡，不写进用户消息。 */
+  #attachMemory(chatId, agent) {
+    if (!this.book || this.memoryAttached.has(agent)) return
+    this.memoryAttached.add(agent)
+    const cell = this.#cell(chatId)
+    try {
+      agent.ctx.systemPrompt.section({
+        name: 'xbot-memory',
+        order: 10300,
+        interpolate: false,
+        text: () => cell.text || '',
+      })
+    } catch (error) {
+      this.options.log.warn(`[xbot] 记忆卡挂不上 (${chatId}): ${error?.message ?? error}`)
+      return
+    }
+    try {
+      agent.ctx.on('agent/pre-step', async (_payload, next) => {
+        const decision = typeof next === 'function' ? await next() : _payload
+        if (!decision || decision.kind !== 'enter' || !cell.series) return decision
+        cell.series = false
+        return { ...decision, startsRequestSeries: true }
+      })
+    } catch (error) {
+      this.options.log.warn(`[xbot] 记忆卡换不了格 (${chatId}): ${error?.message ?? error}`)
+    }
+  }
+
+  async #turn(chatId, text, hint = {}) {
     if (this.disposed) throw new Error('chats disposed')
     const entry = this.entries.get(chatId)
     if (!entry) throw new Error('chat entry missing')
     if (!entry.agent) Object.assign(entry, await this.#create(chatId))
     entry.lastUsed = Date.now()
+    this.#attachMemory(chatId, entry.agent)
+    const cell = this.#cell(chatId)
+    if (this.book) {
+      try {
+        const projected = await this.book.prepare(chatId, {
+          logSessionId: hint.logSessionId || '',
+          roomRev: hint.roomRev || '',
+          speakerId: hint.speakerId || '',
+          speakerRev: hint.speakerRev || '',
+        })
+        cell.text = projected.text
+        // 上一轮要是没走到请求那一步，「该换格」还欠着，不能被这一轮的「没变」盖掉
+        cell.series = cell.series || projected.series
+      } catch (error) {
+        this.options.log.warn(`[xbot] 记忆卡没换上 (${chatId}): ${error?.message ?? error}`)
+      }
+    }
 
     const agent = entry.agent
     let failure
